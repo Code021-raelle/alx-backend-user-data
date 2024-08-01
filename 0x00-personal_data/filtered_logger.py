@@ -6,7 +6,6 @@ import logging
 import re
 import os
 import mysql.connector
-from mysql.connector import connection
 from typing import List, Tuple
 
 
@@ -22,7 +21,7 @@ def filter_datum(
     )
 
 
-def get_db() -> connection.MySQLConnection:
+def get_db() -> mysql.connector.connection.MySQLConnection:
     """ Returns a connection to the database. """
     username = os.getenv("PERSONAL_DATA_DB_USERNAME", "root")
     password = os.getenv("PERSONAL_DATA_DB_PASSWORD", "")
