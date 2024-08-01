@@ -1,74 +1,101 @@
 #!/usr/bin/env python3
 """
-Filtered Logger Module
+A module for obfuscating sensitive data in log messages.
 """
-import logging
-import re
+
 import os
+import re
+import logging
 import mysql.connector
-from mysql.connector import connection
-from typing import List, Tuple
+from typing import List
+
+
+patterns = {
+    'extract': lambda x, y: r'(?P<field>{})=[^{}]*'.format('|'.join(x), y),
+    'replace': lambda x: r'\g<field>={}'.format(x),
+}
+PII_FIELDS = ("name", "email", "phone", "ssn", "password")
 
 
 def filter_datum(
-        fields: List[str],
-        redaction: str,
-        message: str, separator: str) -> str:
-    """ Returns the log message obfuscated. """
-    return re.sub(
-        '|'.join([f'{field}=[^{separator}]*' for field in fields]),
-        lambda m: f"{m.group().split('=')[0]}={redaction}",
-        message
+        fields: List[str], redaction: str, message: str, separator: str,
+        ) -> str:
+    """Filter sensitive data in a log message.
+    """
+    extract, replace = (patterns["extract"], patterns["replace"])
+    return re.sub(extract(fields, separator), replace(redaction), message)
+
+
+def get_logger() -> logging.Logger:
+    """Create a logger for processing sensitive data.
+    """
+    logger = logging.getLogger("user_data")
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(RedactingFormatter(PII_FIELDS))
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    logger.addHandler(stream_handler)
+    return logger
+
+
+def get_db() -> mysql.connector.connection.MySQLConnection:
+    """Get database credentials from environment variables.
+    """
+    db_host = os.getenv("PERSONAL_DATA_DB_HOST", "localhost")
+    db_name = os.getenv("PERSONAL_DATA_DB_NAME")
+    db_user = os.getenv("PERSONAL_DATA_DB_USERNAME", "root")
+    db_pwd = os.getenv("PERSONAL_DATA_DB_PASSWORD", "")
+    connection = mysql.connector.connect(
+        host=db_host,
+        user=db_user,
+        password=db_pwd,
+        database=db_name,
     )
+    return connection
 
 
-def get_db() -> connection.MySQLConnection:
-    """ Returns a connection to the database. """
-    username = os.getenv("PERSONAL_DATA_DB_USERNAME", "root")
-    password = os.getenv("PERSONAL_DATA_DB_PASSWORD", "")
-    host = os.getenv("PERSONAL_DATA_DB_HOST", "localhost")
-    database = os.getenv("PERSONAL_DATA_DB_NAME")
-
-    return mysql.connector.connect(
-        user=username,
-        password=password,
-        host=host,
-        database=database
-    )
+def main():
+    """Retrieve and obfuscate sensitive data from the database and log it.
+    """
+    fields = "name,email,phone,ssn,password,ip,last_login,user_agent"
+    columns = fields.split(',')
+    query = "SELECT {} FROM users;".format(fields)
+    info_logger = get_logger()
+    connection = get_db()
+    with connection.cursor() as cursor:
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        for row in rows:
+            record = map(
+                lambda x: '{}={}'.format(x[0], x[1]),
+                zip(columns, row),
+            )
+            msg = '{};'.format('; '.join(list(record)))
+            args = ("user_data", logging.INFO, None, None, msg, None, None)
+            log_record = logging.LogRecord(*args)
+            info_logger.handle(log_record)
 
 
 class RedactingFormatter(logging.Formatter):
-    """ RedactingFormatter class. """
+    """Formatter class to obfuscate sensitive fields in log records.
+    """
 
     REDACTION = "***"
     FORMAT = "[HOLBERTON] %(name)s %(levelname)s %(asctime)-15s: %(message)s"
+    FORMAT_FIELDS = ('name', 'levelname', 'asctime', 'message')
     SEPARATOR = ";"
 
     def __init__(self, fields: List[str]):
-        """ Initialize the formatter with specific fields to redact. """
         super(RedactingFormatter, self).__init__(self.FORMAT)
         self.fields = fields
 
     def format(self, record: logging.LogRecord) -> str:
-        """ Format the log record, redacting sensitive fields. """
-        original_message = super(RedactingFormatter, self).format(record)
-        return filter_datum(
-            self.fields, self.REDACTION, original_message, self.SEPARATOR)
+        """Format a log record with sensitive fields obfuscated.
+        """
+        msg = super(RedactingFormatter, self).format(record)
+        txt = filter_datum(self.fields, self.REDACTION, msg, self.SEPARATOR)
+        return txt
 
 
-PII_FIELDS: Tuple[str, ...] = ("name", "email", "phone", "ssn", "password")
-
-
-def get_logger() -> logging.Logger:
-    """ Returns a logger object. """
-    logger = logging.getLogger("user_data")
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
-
-    stream_handler = logging.StreamHandler()
-    formatter = RedactingFormatter(fields=PII_FIELDS)
-    stream_handler.setFormatter(formatter)
-
-    logger.addHandler(stream_handler)
-
-    return logger
+if __name__ == "__main__":
+    main()
