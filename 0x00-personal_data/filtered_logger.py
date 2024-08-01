@@ -3,6 +3,7 @@
 Filtered Logger Module
 """
 import logging
+import re
 import os
 import mysql.connector
 from typing import List, Tuple
@@ -13,9 +14,11 @@ def filter_datum(
         redaction: str,
         message: str, separator: str) -> str:
     """ Returns the log message obfuscated. """
-    import re
-    pattern = r"({})=([^{}]*)".format("|".join(fields), separator)
-    return re.sub(pattern, r"\1={}".format{redaction}, message)
+    return re.sub(
+        '|'.join([f'{field}=[^{separator}]*' for field in fields]),
+        lambda m: f"{m.group().split('=')[0]}={redaction}",
+        message
+    )
 
 
 class RedactingFormatter(logging.Formatter):
@@ -37,7 +40,7 @@ class RedactingFormatter(logging.Formatter):
             self.fields, self.REDACTION, original_message, self.SEPARATOR)
 
 
-PII_FIELDS = ("name", "email", "phone", "ssn", "password")
+PII_FIELDS: Tuple[str, ...] = ("name", "email", "phone", "ssn", "password")
 
 
 def get_logger() -> logging.Logger:
@@ -68,26 +71,3 @@ def get_db() -> connection.MySQLConnection:
         host=host,
         database=database
     )
-
-
-def main():
-    """ Main function. """
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute(
-      "SELECT name, email, phone, ssn, password, ip,"
-      "last_login, user_agent FROM users;"
-    )
-    logger = get_logger()
-    for row in cursor:
-        log_message = (
-            "name={}; email={}; phone={}; ssn={};"
-            "password={}; ip={}; last_login={}; user_agent={};"
-            .format(*row))
-        logger.info(log_message)
-    cursor.close()
-    db.close()
-
-
-if __name__ == "__main__":
-    main()
