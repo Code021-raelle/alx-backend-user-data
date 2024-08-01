@@ -3,7 +3,6 @@
 Filtered Logger Module
 """
 import logging
-import re
 import os
 import mysql.connector
 from typing import List, Tuple
@@ -14,26 +13,9 @@ def filter_datum(
         redaction: str,
         message: str, separator: str) -> str:
     """ Returns the log message obfuscated. """
-    return re.sub(
-        '|'.join([f'{field}=[^{separator}]*' for field in fields]),
-        lambda m: f"{m.group().split('=')[0]}={redaction}",
-        message
-    )
-
-
-def get_db() -> mysql.connector.connection.MySQLConnection:
-    """ Returns a connection to the database. """
-    username = os.getenv("PERSONAL_DATA_DB_USERNAME", "root")
-    password = os.getenv("PERSONAL_DATA_DB_PASSWORD", "")
-    host = os.getenv("PERSONAL_DATA_DB_HOST", "localhost")
-    database = os.getenv("PERSONAL_DATA_DB_NAME")
-
-    return mysql.connector.connect(
-        user=username,
-        password=password,
-        host=host,
-        database=database
-    )
+    import re
+    pattern = r"({})=([^{}]*)".format("|".join(fields), separator)
+    return re.sub(pattern, r"\1={}".format{redaction}, message)
 
 
 class RedactingFormatter(logging.Formatter):
@@ -71,3 +53,41 @@ def get_logger() -> logging.Logger:
     logger.addHandler(stream_handler)
 
     return logger
+
+
+def get_db() -> connection.MySQLConnection:
+    """ Returns a connection to the database. """
+    username = os.getenv("PERSONAL_DATA_DB_USERNAME", "root")
+    password = os.getenv("PERSONAL_DATA_DB_PASSWORD", "")
+    host = os.getenv("PERSONAL_DATA_DB_HOST", "localhost")
+    database = os.getenv("PERSONAL_DATA_DB_NAME")
+
+    return mysql.connector.connect(
+        user=username,
+        password=password,
+        host=host,
+        database=database
+    )
+
+
+def main():
+    """ Main function. """
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute(
+      "SELECT name, email, phone, ssn, password, ip,"
+      "last_login, user_agent FROM users;"
+    )
+    logger = get_logger()
+    for row in cursor:
+        log_message = (
+            "name={}; email={}; phone={}; ssn={};"
+            "password={}; ip={}; last_login={}; user_agent={};"
+            .format(*row))
+        logger.info(log_message)
+    cursor.close()
+    db.close()
+
+
+if __name__ == "__main__":
+    main()
